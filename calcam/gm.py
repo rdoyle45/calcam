@@ -95,11 +95,17 @@ class PoloidalVolumeGrid:
                                    
     '''
     
-    def __init__(self,vertices,cells,wall_contour=None,src=None):
+    def __init__(self,vertices,cells,wall_contour=None,src=None, pol_inds=None, rad_inds=None):
 
         self.vertices = vertices.copy()
         self.cells = cells.copy()
-        self.wall_contour = wall_contour.copy()
+        self.pol_inds = pol_inds
+        self.rad_inds = rad_inds
+
+        if type(wall_contour) is str:
+            self.wall_contour = _get_ccm_wall(wall_contour)
+        else:
+            self.wall_contour = wall_contour.copy()
         
         if src is None:
             self.history = 'Created by {:s} on {:s} at {:s}'.format(misc.username,misc.hostname,misc.get_formatted_time())
@@ -112,7 +118,7 @@ class PoloidalVolumeGrid:
         self._build_edge_list()
         self._cull_unused_verts()
 
-        self.gridtype = 'Polyogn Cell Grid'
+        self.gridtype = 'Polygon Cell Grid'
 
 
     @property
@@ -154,7 +160,7 @@ class PoloidalVolumeGrid:
 
 
 
-    def get_cell_intersections(self,ray_start,ray_end,plot=False):
+    def get_cell_intersections(self,ray_start,ray_end,plot=False, ax=None):
         '''
         Get the intersections of a ray, i.e. a straight line
         in 3D space, with the grid cell boundaries.
@@ -255,7 +261,7 @@ class PoloidalVolumeGrid:
             # Also round t_ray to 9 figures because we'll want to find unique values
             # of it shortly, so round to something slightly larger than the expected precision.
             sort_order = np.argsort(t_ray)
-            t_ray = t_ray[sort_order].round(decimals=9)
+            t_ray = t_ray[sort_order].round(decimals=12)
             seg_inds = seg_inds[sort_order]
             
             # This will be the output list of cell indices
@@ -283,14 +289,19 @@ class PoloidalVolumeGrid:
                 l = np.linspace(0,ray_length,int(ray_length/1e-2))
                 R = np.sqrt( (ray_start[0] + l*ray_dir[0])**2 + (ray_start[1] + l*ray_dir[1])**2  )
                 Z = ray_start[2] + l*ray_dir[2]
-                plt.plot(R,Z)
+                if ax:
+                    ax.plot(R,Z)
+                else:
+                    plt.plot(R,Z)
                 
                 # Plot the intersections
                 points3d = np.tile(ray_start[np.newaxis,:],(t_ray.size,1)) + np.tile(t_ray[:,np.newaxis],(1,3)) * np.tile(ray_dir[np.newaxis,:],(t_ray.size,1))
                 R = np.sqrt(np.sum(points3d[:,:2]**2,axis=1))
                 Z = points3d[:,2]
-                plt.plot(R,Z,'ro')
-
+                if ax:
+                    ax.plot(R,Z,'ro')
+                else:
+                    plt.plot(R,Z, 'ro')
 
         return t_ray,cell_inds
 
@@ -643,7 +654,9 @@ class GeometryMatrix:
             
             self.image_geometry = raydata.transform
 
-            self.history = {'los':raydata.history,'grid':grid.history,'matrix':'Created by {:s} on {:s} at {:s}'.format(misc.username,misc.hostname,misc.get_formatted_time())}
+            self.history = {'los':raydata.history,'grid':grid.history,
+                            'matrix':'Created by {:s} on {:s} at {:s}'.format(misc.username,misc.hostname,
+                                                                              misc.get_formatted_time())}
             
             # Number of grid cells and sight lines
             n_cells = grid.n_cells
@@ -671,7 +684,10 @@ class GeometryMatrix:
 
             with multiprocessing.Pool( config.n_cpus ) as cpupool:
                 calc_status_callback(0.)
-                for i , row_data in enumerate( cpupool.imap( self._calc_row_volume, np.hstack((ray_start_coords[inds,:],ray_end_coords[inds,:])) , 10 ) ):          
+                for i , row_data in enumerate( cpupool.imap( self._calc_row_volume,
+                                                             np.hstack((ray_start_coords[inds,:],
+                                                                        ray_end_coords[inds,:])) , 10 ) ):
+
                     rowinds.append(np.zeros(row_data[0].shape,dtype=np.uint32) + inds[i])                    
                     colinds.append(row_data[0])
                     data.append(row_data[1])
@@ -765,7 +781,9 @@ class GeometryMatrix:
             ind_arrays = []
             for colshift in range(bin_factor):
                 for rowshift in range(bin_factor):
-                    ind_arrays.append(row_inds[colshift::bin_factor,rowshift::bin_factor].reshape(int(np.prod(init_shape)/bin_factor**2),order=self.pixel_order))
+                    ind_arrays.append(row_inds[colshift::bin_factor,
+                                      rowshift::bin_factor].reshape(int(np.prod(init_shape)/bin_factor**2),
+                                                                    order=self.pixel_order))
                     ind_arrays[-1] = index_map[ind_arrays[-1]][px_mask == True]
 
             new_data = self.data[ind_arrays[0],:]
@@ -916,7 +934,7 @@ class GeometryMatrix:
 
             coords (str)          : Either 'Display' or 'Original', \
                                     specifies what orientation the input \
-                                    image is in. If not givwn, it will be \
+                                    image is in. If not given, it will be \
                                     auto-detected if possible.
 
         Returns:
@@ -1140,6 +1158,8 @@ class GeometryMatrix:
                              grid_verts = self.grid.vertices,
                              grid_cells = self.grid.cells,
                              grid_wall = self.grid.wall_contour,
+                             grid_pol_inds = self.grid.pol_inds,
+                             grid_rad_inds = self.grid.rad_inds,
                              binning = self.binning,
                              pixel_order = self.pixel_order,
                              pixel_mask = self.pixel_mask,
@@ -1167,7 +1187,8 @@ class GeometryMatrix:
         self.image_geometry.set_pixel_aspect(f['im_px_aspect'],relative_to='Original')
         self.image_geometry.set_image_shape(*self.binning*np.array(self.pixel_mask.shape[::-1]),coords=self.image_coords)
         
-        self.grid = PoloidalVolumeGrid(f['grid_verts'],f['grid_cells'],f['grid_wall'],src=self.history['grid'])
+        self.grid = PoloidalVolumeGrid(f['grid_verts'],f['grid_cells'],f['grid_wall'],src=self.history['grid'],
+                                       pol_inds=f['grid_pol_inds'], rad_inds=f['grid_rad_inds'])
         self.data = scipy.sparse.csr_matrix((f['mat_data'],(f['mat_row_inds'],f['mat_col_inds'])),shape=f['mat_shape'])
 
 
@@ -1716,11 +1737,13 @@ def solps_grid(solps_file,wall_contour,rmin=None,rmax=None,zmin=None,zmax=None,c
     vertices = np.array(vertices)
     cell_info = np.column_stack((pol_inds,rad_inds, centres, cells))
     cell_info = cell_info[cell_info[:,0].argsort()]
-    cell_info = cell_info[cell_info[:,1].argsort(kind='mergesort')]
+    cell_info = cell_info[cell_info[:,1].argsort(kind='mergesort')].astype(int)
 
     cell_info[:, [-2,-1]] = cell_info[:,[-1,-2]]  # Swap coords order to match Calcam convention
 
-    grid = PoloidalVolumeGrid(vertices, cell_info[:, -4:].astype(int), wall_contour,src="Loaded from SOLPS-ITER DivGeo-Carre file: {:s}".format(solps_file))
+    grid = PoloidalVolumeGrid(vertices, cell_info[:, -4:], wall_contour,
+                              src="Loaded from SOLPS-ITER DivGeo-Carre file: {:s}".format(solps_file),
+                              pol_inds=cell_info[:,0], rad_inds=cell_info[:,1])
 
     if cell_attrs:
         return grid,cell_info

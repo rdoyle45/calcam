@@ -337,12 +337,12 @@ class RayData:
         else:
             raise Exception('Cannot save RayData with >2D x and y arrays!')
 
-        binning = f.createVariable('Binning','f4',())
+        binning = f.createVariable('Binning', 'f4', ())
 
         if self.binning is not None:
-            binning.assignValue(self.binning)
+            binning.data = np.array(self.binning, dtype='f4')  # Assign as a NumPy array
         else:
-            binning.assignValue(0)
+            binning.data = np.array(0, dtype='f4')
 
         f.createDimension('pixelsdim',2)
 
@@ -352,8 +352,8 @@ class RayData:
         offset = f.createVariable('image_offset','i4',('pixelsdim',))
         offset[:] = self.transform.offset[:]
 
-        pixelaspect = f.createVariable('image_original_pixel_aspect','f4',())
-        pixelaspect.assignValue(self.transform.pixel_aspectratio)
+        pixelaspect = f.createVariable('image_original_pixel_aspect', 'f4', ())
+        pixelaspect.data = np.array(self.transform.pixel_aspectratio, dtype='f4')
 
         binning.units = 'pixels'
         raystart.units = 'm'
